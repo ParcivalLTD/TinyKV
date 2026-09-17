@@ -1,0 +1,141 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Build & Test (Java 21)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'gradle'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Run automated test suite
+        run: ./gradlew test --info
+
+      - name: Verify interactive demo
+        run: ./gradlew runDemo
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: build/reports/tests/test/
+
+  go-test:
+    name: Go Client Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Run Go Client Unit Tests
+        run: |
+          cd client/go
+          go test -v -race ./...
+
+  docker:
+    name: Docker Build & Smoke Test
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          load: true
+          tags: tinykv:test
+
+      - name: Smoke test container
+        run: |
+          docker run -d -p 8080:8080 --name tinykv-smoke tinykv:test
+          sleep 4
+          
+          echo "Testing healthz endpoint..."
+          curl --fail http://localhost:8080/healthz
+          
+          echo "Testing readyz endpoint..."
+          curl --fail http://localhost:8080/readyz
+          
+          echo "Testing PUT key..."
+          curl -s -X PUT http://localhost:8080/api/v1/keys/ci_token -d "token_abcdef"
+          
+          echo "Testing GET key..."
+          val=$(curl -s http://localhost:8080/api/v1/keys/ci_token)
+          if [ "$val" != "token_abcdef" ]; then
+            echo "Unexpected value: $val"
+            exit 1
+          fi
+          
+          echo "Testing DELETE key..."
+          curl -s -X DELETE http://localhost:8080/api/v1/keys/ci_token
+          
+          echo "Container smoke test passed cleanly!"
+          docker stop tinykv-smoke
+
+  kind-e2e:
+    name: Kind E2E (NGINX Gateway Fabric v2.7.2)
+    needs: [test, go-test, docker]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install kind
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          kind version
+
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x ./kubectl
+          sudo mv ./kubectl /usr/local/bin/kubectl
+          kubectl version --client
+
+      - name: Deploy TinyKV on kind with NGINX Gateway Fabric
+        run: |
+          chmod +x k8s/deploy.sh
+          ./k8s/deploy.sh
+
+      - name: Run Go Load Generator through NGINX Gateway Fabric
+        run: |
+          cd client/go
+          go run ./cmd/loadgen -url http://localhost/ -concurrency 10 -requests 200 -val-size 64
