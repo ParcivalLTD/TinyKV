@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TinyKV — kv.wavebeef.com</title>
+</head>
+<body>
+
+  <h1>TinyKV</h1>
+  <p>Embedded Bitcask Key-Value Engine (Java 21)</p>
+  <p>Live instance: <code>https://kv.wavebeef.com</code></p>
+
+  <hr>
+
+  <h2>System Status</h2>
+  <p>
+    Status: <b id="healthStatus">checking...</b><br>
+    Active Keys: <span id="statKeys">-</span><br>
+    Total Disk Usage: <span id="statDisk">-</span><br>
+    Active Segments: <span id="statSegments">-</span><br>
+    Dead / Obsolete Space: <span id="statDead">-</span> (<span id="statDeadPct">-</span>)<br>
+    Sync Policy: <code>SYNC_EVERY_APPEND</code> (Group Commit fsync)
+  </p>
+  <p>
+    <button type="button" onclick="refreshStats()">Refresh Stats</button>
+    <button type="button" onclick="handleCompact()">Trigger WAL Compaction</button>
+  </p>
+
+  <hr>
+
+  <h2>Console</h2>
+
+  <p>
+    Presets:
+    <button type="button" onclick="setSample('user:101', '{\x22name\x22: \x22Julian\x22, \x22role\x22: \x22engineer\x22}')">Sample JSON</button>
+    <button type="button" onclick="setSample('config:timeout', '5000')">Sample Scalar</button>
+    <button type="button" onclick="setSample('metric:cpu', '14.2%')">Sample Metric</button>
+  </p>
+
+  <form onsubmit="return false;">
+    <p>
+      <label for="keyInput"><b>Key:</b></label><br>
+      <input type="text" id="keyInput" size="40" placeholder="e.g. user:101">
+    </p>
+
+    <p>
+      <label for="valInput"><b>Value:</b></label><br>
+      <textarea id="valInput" rows="6" cols="60" placeholder="e.g. {&quot;name&quot;: &quot;Julian&quot;}"></textarea>
+    </p>
+
+    <p>
+      <label for="tokenInput"><b>Write Token (optional):</b></label><br>
+      <input type="password" id="tokenInput" size="40" placeholder="Required only if TINYKV_WRITE_TOKEN is set">
+    </p>
+
+    <p>
+      <button type="button" onclick="handleGet()">GET</button>
+      <button type="button" onclick="handlePut()">PUT</button>
+      <button type="button" onclick="handleDelete()">DELETE</button>
+    </p>
+  </form>
+
+  <h3>Response</h3>
+  <p>
+    Status: <b id="responseStatus">-</b> | Latency: <span id="responseLatency">-</span>
+  </p>
+  <pre id="terminalOutput">(no query executed yet)</pre>
+
+  <hr>
+
+  <h2>API Endpoints</h2>
+  <table border="1" cellpadding="6" cellspacing="0">
+    <thead>
+      <tr>
+        <th>Method</th>
+        <th>Endpoint</th>
+        <th>Description</th>
+        <th>Status Codes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>GET</code></td>
+        <td><code>/</code></td>
+        <td>This console</td>
+        <td>200 OK</td>
+      </tr>
+      <tr>
+        <td><code>GET</code></td>
+        <td><code>/healthz</code></td>
+        <td>Kubernetes liveness probe</td>
+        <td>200 OK</td>
+      </tr>
+      <tr>
+        <td><code>GET</code></td>
+        <td><code>/readyz</code></td>
+        <td>Kubernetes readiness probe</td>
+        <td>200 OK</td>
+      </tr>
+      <tr>
+        <td><code>GET</code></td>
+        <td><code>/api/v1/keys/{key}</code></td>
+        <td>Retrieve value for key</td>
+        <td>200 OK, 404 Not Found</td>
+      </tr>
+      <tr>
+        <td><code>PUT</code></td>
+        <td><code>/api/v1/keys/{key}</code></td>
+        <td>Store value for key</td>
+        <td>200 OK</td>
+      </tr>
+      <tr>
+        <td><code>DELETE</code></td>
+        <td><code>/api/v1/keys/{key}</code></td>
+        <td>Delete key (append tombstone)</td>
+        <td>204 No Content, 404 Not Found</td>
+      </tr>
+      <tr>
+        <td><code>GET</code></td>
+        <td><code>/api/v1/stats</code></td>
+        <td>Storage engine telemetry</td>
+        <td>200 OK</td>
+      </tr>
+      <tr>
+        <td><code>POST</code></td>
+        <td><code>/api/v1/compact</code></td>
+        <td>Trigger background compaction</td>
+        <td>200 OK</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <hr>
+
+  <h2>cURL Examples</h2>
+  <pre># Store a key
+curl -X PUT https://kv.wavebeef.com/api/v1/keys/user:101 -d '{"name":"Julian"}'
+
+# Read a key
+curl https://kv.wavebeef.com/api/v1/keys/user:101
+
+# View database metrics
+curl https://kv.wavebeef.com/api/v1/stats
+
+# Delete key
+curl -X DELETE https://kv.wavebeef.com/api/v1/keys/user:101
+
+# Run compaction
+curl -X POST https://kv.wavebeef.com/api/v1/compact</pre>
+
+  <hr>
+
+  <h2>Architecture Notes</h2>
+  <ul>
+    <li><b>Bitcask Engine:</b> Active Write-Ahead Log (WAL) for append-only sequential writes + in-memory hash index mapping keys to segment file offsets.</li>
+    <li><b>O(1) Reads:</b> Single disk seek directly to byte coordinates without scanning files.</li>
+    <li><b>Crash Safety:</b> 22-byte binary framing with CRC-32 checksum per record. Partial/torn writes auto-truncated on boot.</li>
+    <li><b>Group Commit:</b> Coalesces concurrent fsync requests into micro-batches for high durable write throughput.</li>
+    <li><b>Online Compaction:</b> Dead space reclaimed into consolidated segments with companion <code>.hint</code> files for millisecond cold boots.</li>
+    <li><b>Zero Dependencies:</b> Implemented purely on Java 21 standard library and Virtual Threads.</li>
+  </ul>
+
+  <hr>
+
+  <p>
+    <small>
+      Repository: <a href="https://github.com/ParcivalLTD/TinyKV">github.com/ParcivalLTD/TinyKV</a> |
+      Runtime: Java 21 Temurin |
+      Deployment: Coolify / kind
+    </small>
+  </p>
+
+  <script>
+    function setSample(k, v) {
+      document.getElementById('keyInput').value = k;
+      document.getElementById('valInput').value = v;
+    }
+
+    async function refreshStats() {
+      try {
+        const res = await fetch('/api/v1/stats');
+        if (res.ok) {
+          const s = await res.json();
+          document.getElementById('statKeys').innerText = s.activeKeys.toLocaleString();
+          document.getElementById('statDisk').innerText = formatBytes(s.totalDiskBytes);
+          document.getElementById('statSegments').innerText = s.totalSegments;
+          document.getElementById('statDead').innerText = formatBytes(s.deadDataBytes);
+          document.getElementById('statDeadPct').innerText = s.deadSpacePercent.toFixed(1) + '% reclaimable';
+        }
+      } catch (e) {
+        console.error('Failed to fetch stats', e);
+      }
+    }
+
+    async function checkHealth() {
+      try {
+        const res = await fetch('/healthz');
+        if (res.ok) {
+          document.getElementById('healthStatus').innerText = 'UP (healthy)';
+        }
+      } catch (e) {
+        document.getElementById('healthStatus').innerText = 'DOWN (unreachable)';
+      }
+    }
+
+    function getAuthHeaders() {
+      const el = document.getElementById('tokenInput');
+      const token = el ? el.value.trim() : '';
+      const headers = {};
+      if (token) {
+        headers['Authorization'] = 'Bearer ' + token;
+      }
+      return headers;
+    }
+
+    async function handlePut() {
+      const k = document.getElementById('keyInput').value.trim();
+      const v = document.getElementById('valInput').value;
+      if (!k) return alert('Key is required');
+
+      const t0 = performance.now();
+      try {
+        const res = await fetch('/api/v1/keys/' + encodeURIComponent(k), {
+          method: 'PUT',
+          headers: getAuthHeaders(),
+          body: v
+        });
+        const elapsed = (performance.now() - t0).toFixed(2);
+        const text = await res.text();
+        showResponse(res.status, elapsed, text);
+        refreshStats();
+      } catch (e) {
+        showResponse(500, 0, e.message);
+      }
+    }
+
+    async function handleGet() {
+      const k = document.getElementById('keyInput').value.trim();
+      if (!k) return alert('Key is required');
+
+      const t0 = performance.now();
+      try {
+        const res = await fetch('/api/v1/keys/' + encodeURIComponent(k));
+        const elapsed = (performance.now() - t0).toFixed(2);
+        const text = await res.text();
+        showResponse(res.status, elapsed, text);
+      } catch (e) {
+        showResponse(500, 0, e.message);
+      }
+    }
+
+    async function handleDelete() {
+      const k = document.getElementById('keyInput').value.trim();
+      if (!k) return alert('Key is required');
+
+      const t0 = performance.now();
+      try {
+        const res = await fetch('/api/v1/keys/' + encodeURIComponent(k), {
+          method: 'DELETE',
+          headers: getAuthHeaders()
+        });
+        const elapsed = (performance.now() - t0).toFixed(2);
+        const text = res.status === 204 ? '[204 No Content - Key deleted]' : await res.text();
+        showResponse(res.status, elapsed, text);
+        refreshStats();
+      } catch (e) {
+        showResponse(500, 0, e.message);
+      }
+    }
+
+    async function handleCompact() {
+      const t0 = performance.now();
+      try {
+        const res = await fetch('/api/v1/compact', {
+          method: 'POST',
+          headers: getAuthHeaders()
+        });
+        const elapsed = (performance.now() - t0).toFixed(2);
+        const text = await res.text();
+        showResponse(res.status, elapsed, text);
+        refreshStats();
+      } catch (e) {
+        showResponse(500, 0, e.message);
+      }
+    }
+
+    function showResponse(status, ms, body) {
+      document.getElementById('responseStatus').innerText = 'HTTP ' + status;
+      document.getElementById('responseLatency').innerText = ms + ' ms';
+
+      let formatted = body;
+      try {
+        formatted = JSON.stringify(JSON.parse(body), null, 2);
+      } catch (ignored) {}
+
+      document.getElementById('terminalOutput').innerText = formatted || '(empty body)';
+    }
+
+    function formatBytes(bytes) {
+      if (!bytes || bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return (bytes / Math.pow(k, i)).toFixed(1) + ' ' + sizes[i];
+    }
+
+    refreshStats();
+    checkHealth();
+    setInterval(refreshStats, 4000);
+  </script>
+</body>
+</html>

@@ -72,6 +72,8 @@ public interface KVStore extends AutoCloseable {
 
     Stats stats();
 
+    boolean isOpen();
+
     @Override
     void close();
 
@@ -245,6 +247,11 @@ public interface KVStore extends AutoCloseable {
 
         private void checkOpen() {
             if (closed) throw new StorageClosedException("KVStore is closed");
+        }
+
+        @Override
+        public boolean isOpen() {
+            return !closed;
         }
 
         @Override

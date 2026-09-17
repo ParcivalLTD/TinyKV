@@ -37,5 +37,13 @@ tasks.named('test') {
 }
 
 application {
+    mainClass = 'io.tinykv.http.ServerMain'
+}
+
+tasks.register('runDemo', JavaExec) {
+    group = 'application'
+    description = 'Runs the interactive TinyKV benchmark demo'
+    classpath = sourceSets.main.runtimeClasspath
     mainClass = 'io.tinykv.demo.Demo'
 }
+
