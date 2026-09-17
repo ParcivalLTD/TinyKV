@@ -1,0 +1,14 @@
+apiVersion: gateway.nginx.org/v1alpha2
+kind: NginxProxy
+metadata:
+  name: nginx-gateway-proxy-config
+  namespace: nginx-gateway
+spec:
+  kubernetes:
+    service:
+      type: NodePort
+      nodePorts:
+      - listenerPort: 80
+        port: 31437
+      - listenerPort: 443
+        port: 30478

@@ -1,0 +1,82 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tinykv
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tinykv-service
+  namespace: tinykv
+  labels:
+    app: tinykv
+spec:
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: http
+  selector:
+    app: tinykv
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: tinykv
+  namespace: tinykv
+spec:
+  serviceName: tinykv-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tinykv
+  template:
+    metadata:
+      labels:
+        app: tinykv
+    spec:
+      containers:
+      - name: tinykv
+        image: tinykv:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: TINYKV_PORT
+          value: "8080"
+        - name: TINYKV_DATA_DIR
+          value: "/data"
+        - name: TINYKV_SYNC_POLICY
+          value: "GROUP_COMMIT"
+        - name: TINYKV_MAX_SEGMENT_MB
+          value: "16"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 3
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8080
+          initialDelaySeconds: 3
+          periodSeconds: 5
+        volumeMounts:
+        - name: tinykv-data
+          mountPath: /data
+  volumeClaimTemplates:
+  - metadata:
+      name: tinykv-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 1Gi
