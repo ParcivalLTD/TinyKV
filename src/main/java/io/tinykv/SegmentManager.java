@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -36,6 +37,14 @@ public final class SegmentManager implements AutoCloseable {
     private final Index index;
     private final Map<Long, Segment> sealed = new ConcurrentHashMap<>();
     private final AtomicLong nextId = new AtomicLong(1);
+
+    /**
+     * Delete timestamps seen while replaying segments at startup. Segments are replayed in id
+     * order, but a compacted segment gets a higher id than the active segment that may hold a
+     * newer tombstone, so a stale copy can be replayed after its delete. Checking against this
+     * map keeps deleted keys deleted. Ties go to the delete, as in {@link Index#remove}.
+     */
+    private final Map<Record.Key, Long> recoveredTombstones = new HashMap<>();
 
     private volatile Segment active;
     private volatile boolean closed;
@@ -87,6 +96,7 @@ public final class SegmentManager implements AutoCloseable {
                 sealed.put(id, Segment.open(dataDir, id, true));
             }
         }
+        recoveredTombstones.clear();
     }
 
     private void loadHint(Path hintPath) throws IOException {
@@ -96,13 +106,19 @@ public final class SegmentManager implements AutoCloseable {
                 HintReadResult res = RecordCodec.readHintAt(ch, pos);
                 if (res instanceof HintReadResult.CleanEof) break;
                 if (res instanceof HintReadResult.Success s) {
-                    index.putIfNewer(s.hint().key(), new IndexEntry(s.hint().segmentId(), s.hint().offset(), s.hint().length(), s.hint().timestamp()));
+                    indexUnlessDeleted(s.hint().key(), new IndexEntry(s.hint().segmentId(), s.hint().offset(), s.hint().length(), s.hint().timestamp()));
                     pos += s.bytesRead();
                 } else if (res instanceof HintReadResult.Corrupted c) {
                     throw new CorruptedRecordException("Corrupted hint file: " + c.reason());
                 }
             }
         }
+    }
+
+    private void indexUnlessDeleted(Record.Key key, IndexEntry entry) {
+        Long deletedAt = recoveredTombstones.get(key);
+        if (deletedAt != null && deletedAt >= entry.timestamp()) return;
+        index.putIfNewer(key, entry);
     }
 
     private void recoverDataSegment(long segId, boolean isTail) throws IOException {
@@ -115,9 +131,10 @@ public final class SegmentManager implements AutoCloseable {
                 if (res instanceof ReadResult.Success s) {
                     LogRecord rec = s.record();
                     if (rec.isTombstone()) {
+                        recoveredTombstones.merge(rec.key(), rec.timestamp(), Math::max);
                         index.remove(rec.key(), rec.timestamp());
                     } else {
-                        index.putIfNewer(rec.key(), new IndexEntry(segId, pos, s.bytesRead(), rec.timestamp()));
+                        indexUnlessDeleted(rec.key(), new IndexEntry(segId, pos, s.bytesRead(), rec.timestamp()));
                     }
                     pos += s.bytesRead();
                 } else if (res instanceof ReadResult.Corrupted c) {
@@ -166,11 +183,16 @@ public final class SegmentManager implements AutoCloseable {
         return Collections.unmodifiableList(list);
     }
 
-    public synchronized void replaceCompactedSegments(List<Long> oldIds, Segment compacted, Path hintPath) throws IOException {
+    /** Makes a freshly written compacted segment readable, before the index points at it. */
+    public synchronized void registerCompactedSegment(Segment compacted) {
         checkOpen();
         compacted.markReadOnly();
         sealed.put(compacted.getSegmentId(), compacted);
+    }
 
+    /** Deletes the segments a compaction replaced, once the index no longer points at them. */
+    public synchronized void removeCompactedSources(List<Long> oldIds) throws IOException {
+        checkOpen();
         for (long oldId : oldIds) {
             Segment old = sealed.remove(oldId);
             if (old != null) old.delete();

@@ -140,19 +140,27 @@ public interface KVStore extends AutoCloseable {
         public Optional<byte[]> get(byte[] keyBytes) {
             checkOpen();
             Key key = Key.of(keyBytes);
-            Optional<IndexEntry> entryOpt = index.get(key);
-            if (entryOpt.isEmpty()) return Optional.empty();
+            for (int attempt = 0; ; attempt++) {
+                Optional<IndexEntry> entryOpt = index.get(key);
+                if (entryOpt.isEmpty()) return Optional.empty();
 
-            IndexEntry entry = entryOpt.get();
-            try {
-                Segment seg = segmentManager.getSegment(entry.segmentId());
-                LogRecord rec = seg.readRecord(entry.offset(), entry.length());
-                if (rec.isTombstone()) return Optional.empty();
-                return Optional.of(rec.value());
-            } catch (IOException e) {
-                throw new StorageException("Failed to read key: " + key, e);
+                IndexEntry entry = entryOpt.get();
+                try {
+                    Segment seg = segmentManager.getSegment(entry.segmentId());
+                    LogRecord rec = seg.readRecord(entry.offset(), entry.length());
+                    if (rec.isTombstone()) return Optional.empty();
+                    return Optional.of(rec.value());
+                } catch (IOException | RuntimeException e) {
+                    // Compaction may have moved the key and deleted the old segment between the
+                    // index lookup and the read. If the entry changed, read the new location.
+                    if (attempt < MAX_READ_RETRIES && !index.get(key).equals(entryOpt)) continue;
+                    if (e instanceof RuntimeException re) throw re;
+                    throw new StorageException("Failed to read key: " + key, e);
+                }
             }
         }
+
+        private static final int MAX_READ_RETRIES = 3;
 
         @Override
         public boolean delete(byte[] keyBytes) {

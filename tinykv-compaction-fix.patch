@@ -1,0 +1,312 @@
+From bf91f3e3f779f960f61b6f6170da07b96178ee97 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 24 Oct 2026 15:10:38 +0200
+Subject: [PATCH] Fix compaction races: deleted keys returning and reads
+ failing
+
+Compaction now copies live records without touching the index, registers
+the new segment, then swaps each entry with a compare-and-set, so writes
+and deletes that land during compaction win. Hints are written only for
+swapped entries. Recovery tracks tombstones so a stale copy in a
+compacted segment cannot bring a deleted key back after a restart.
+Reads retry when compaction moved the key between lookup and read.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01KX6wPBi9MP3EznAPnbTCtU
+---
+ src/main/java/io/tinykv/Compactor.java        | 63 ++++++++++++-------
+ src/main/java/io/tinykv/Index.java            | 12 ++++
+ src/main/java/io/tinykv/KVStore.java          | 28 ++++++---
+ src/main/java/io/tinykv/SegmentManager.java   | 28 ++++++++-
+ .../java/io/tinykv/CompactionRaceTest.java    |  9 +--
+ 5 files changed, 99 insertions(+), 41 deletions(-)
+
+diff --git a/src/main/java/io/tinykv/Compactor.java b/src/main/java/io/tinykv/Compactor.java
+index e903237..7171a1a 100644
+--- a/src/main/java/io/tinykv/Compactor.java
++++ b/src/main/java/io/tinykv/Compactor.java
+@@ -2,6 +2,7 @@ package io.tinykv;
+ 
+ import io.tinykv.Record.Hint;
+ import io.tinykv.Record.IndexEntry;
++import io.tinykv.Record.Key;
+ import io.tinykv.Record.LogRecord;
+ import io.tinykv.RecordCodec.ReadResult;
+ import java.io.IOException;
+@@ -16,9 +17,20 @@ import java.util.Optional;
+ 
+ /**
+  * Background garbage collector: purges dead records and generates companion .hint files.
++ *
++ * Compaction runs concurrently with writers, so it works in three phases:
++ * <ol>
++ *   <li>Copy every record that is live right now into a new segment, without touching the index.</li>
++ *   <li>Register the new segment, so any index entry pointing at it can be read.</li>
++ *   <li>Swap each copied key's index entry with a compare-and-set. If the key was overwritten or
++ *       deleted during the copy, the swap fails and the newer state wins. Only then are the old
++ *       segments deleted.</li>
++ * </ol>
+  */
+ public final class Compactor {
+ 
++    private record Swap(Key key, IndexEntry before, IndexEntry after) {}
++
+     private final Path dataDir;
+     private final SegmentManager segmentManager;
+     private final Index index;
+@@ -41,13 +53,10 @@ public final class Compactor {
+         Path hintPath = dataDir.resolve(Segment.hintFileNameFor(compactedId));
+ 
+         Segment compactedSegment = Segment.open(dataDir, compactedId, false);
++        List<Swap> swaps = new ArrayList<>();
+ 
+-        try (FileChannel hintChannel = FileChannel.open(
+-                hintPath,
+-                StandardOpenOption.CREATE,
+-                StandardOpenOption.WRITE,
+-                StandardOpenOption.TRUNCATE_EXISTING
+-        )) {
++        // Phase 1: copy live records. The index still points at the old segments.
++        try {
+             for (Segment sourceSeg : sealed) {
+                 long segId = sourceSeg.getSegmentId();
+                 FileChannel sourceChannel = sourceSeg.getChannel();
+@@ -58,36 +67,46 @@ public final class Compactor {
+                     if (res instanceof ReadResult.CleanEof) break;
+                     if (res instanceof ReadResult.Success s) {
+                         LogRecord record = s.record();
+-                        int recordBytes = s.bytesRead();
+-
+                         Optional<IndexEntry> cur = index.get(record.key());
+                         if (cur.isPresent() && cur.get().segmentId() == segId && cur.get().offset() == pos) {
+-                            // Live record: copy to compacted segment
+-                            ByteBuffer enc = RecordCodec.encode(record);
+-                            Segment.AppendResult app = compactedSegment.append(enc);
+-
+-                            // Write hint
+-                            Hint hint = new Hint(record.timestamp(), record.key(), compactedId, app.offset(), app.length());
+-                            ByteBuffer encHint = RecordCodec.encodeHint(hint);
+-                            while (encHint.hasRemaining()) hintChannel.write(encHint);
+-
+-                            index.putIfNewer(record.key(), new IndexEntry(compactedId, app.offset(), app.length(), record.timestamp()));
++                            Segment.AppendResult app = compactedSegment.append(RecordCodec.encode(record));
++                            swaps.add(new Swap(record.key(), cur.get(),
++                                    new IndexEntry(compactedId, app.offset(), app.length(), record.timestamp())));
+                         }
+-                        pos += recordBytes;
++                        pos += s.bytesRead();
+                     } else if (res instanceof ReadResult.Corrupted) {
+                         break;
+                     }
+                 }
+             }
+-            hintChannel.force(false);
+             compactedSegment.force(false);
+         } catch (Exception e) {
+             compactedSegment.close();
+             Files.deleteIfExists(compactedDataPath);
+-            Files.deleteIfExists(hintPath);
+             throw new IOException("Compaction failed: " + e.getMessage(), e);
+         }
+ 
+-        segmentManager.replaceCompactedSegments(oldIds, compactedSegment, hintPath);
++        // Phase 2: make the new segment readable before any index entry points at it.
++        segmentManager.registerCompactedSegment(compactedSegment);
++
++        // Phase 3: swap entries that are still unchanged; write hints only for those.
++        try (FileChannel hintChannel = FileChannel.open(
++                hintPath,
++                StandardOpenOption.CREATE,
++                StandardOpenOption.WRITE,
++                StandardOpenOption.TRUNCATE_EXISTING
++        )) {
++            for (Swap swap : swaps) {
++                if (index.replaceIfUnchanged(swap.key(), swap.before(), swap.after())) {
++                    IndexEntry e = swap.after();
++                    ByteBuffer encHint = RecordCodec.encodeHint(
++                            new Hint(e.timestamp(), swap.key(), compactedId, e.offset(), e.length()));
++                    while (encHint.hasRemaining()) hintChannel.write(encHint);
++                }
++            }
++            hintChannel.force(false);
++        }
++
++        segmentManager.removeCompactedSources(oldIds);
+     }
+ }
+diff --git a/src/main/java/io/tinykv/Index.java b/src/main/java/io/tinykv/Index.java
+index 7d57ff6..709eaac 100644
+--- a/src/main/java/io/tinykv/Index.java
++++ b/src/main/java/io/tinykv/Index.java
+@@ -41,6 +41,18 @@ public final class Index {
+         return updated.get();
+     }
+ 
++    /**
++     * Swaps the entry for {@code key} only if it still equals {@code expected}.
++     * Compaction uses this so that a write or delete that lands while it is copying
++     * always wins over the copied (older) location.
++     */
++    public boolean replaceIfUnchanged(Key key, IndexEntry expected, IndexEntry updated) {
++        Objects.requireNonNull(key);
++        Objects.requireNonNull(expected);
++        Objects.requireNonNull(updated);
++        return map.replace(key, expected, updated);
++    }
++
+     public boolean remove(Key key, long timestamp) {
+         Objects.requireNonNull(key);
+         AtomicBoolean removed = new AtomicBoolean(false);
+diff --git a/src/main/java/io/tinykv/KVStore.java b/src/main/java/io/tinykv/KVStore.java
+index 64209dc..3d6b128 100644
+--- a/src/main/java/io/tinykv/KVStore.java
++++ b/src/main/java/io/tinykv/KVStore.java
+@@ -140,20 +140,28 @@ public interface KVStore extends AutoCloseable {
+         public Optional<byte[]> get(byte[] keyBytes) {
+             checkOpen();
+             Key key = Key.of(keyBytes);
+-            Optional<IndexEntry> entryOpt = index.get(key);
+-            if (entryOpt.isEmpty()) return Optional.empty();
++            for (int attempt = 0; ; attempt++) {
++                Optional<IndexEntry> entryOpt = index.get(key);
++                if (entryOpt.isEmpty()) return Optional.empty();
+ 
+-            IndexEntry entry = entryOpt.get();
+-            try {
+-                Segment seg = segmentManager.getSegment(entry.segmentId());
+-                LogRecord rec = seg.readRecord(entry.offset(), entry.length());
+-                if (rec.isTombstone()) return Optional.empty();
+-                return Optional.of(rec.value());
+-            } catch (IOException e) {
+-                throw new StorageException("Failed to read key: " + key, e);
++                IndexEntry entry = entryOpt.get();
++                try {
++                    Segment seg = segmentManager.getSegment(entry.segmentId());
++                    LogRecord rec = seg.readRecord(entry.offset(), entry.length());
++                    if (rec.isTombstone()) return Optional.empty();
++                    return Optional.of(rec.value());
++                } catch (IOException | RuntimeException e) {
++                    // Compaction may have moved the key and deleted the old segment between the
++                    // index lookup and the read. If the entry changed, read the new location.
++                    if (attempt < MAX_READ_RETRIES && !index.get(key).equals(entryOpt)) continue;
++                    if (e instanceof RuntimeException re) throw re;
++                    throw new StorageException("Failed to read key: " + key, e);
++                }
+             }
+         }
+ 
++        private static final int MAX_READ_RETRIES = 3;
++
+         @Override
+         public boolean delete(byte[] keyBytes) {
+             checkOpen();
+diff --git a/src/main/java/io/tinykv/SegmentManager.java b/src/main/java/io/tinykv/SegmentManager.java
+index 51116e2..82d06fc 100644
+--- a/src/main/java/io/tinykv/SegmentManager.java
++++ b/src/main/java/io/tinykv/SegmentManager.java
+@@ -14,6 +14,7 @@ import java.nio.file.Path;
+ import java.nio.file.StandardOpenOption;
+ import java.util.ArrayList;
+ import java.util.Collections;
++import java.util.HashMap;
+ import java.util.List;
+ import java.util.Map;
+ import java.util.concurrent.ConcurrentHashMap;
+@@ -37,6 +38,14 @@ public final class SegmentManager implements AutoCloseable {
+     private final Map<Long, Segment> sealed = new ConcurrentHashMap<>();
+     private final AtomicLong nextId = new AtomicLong(1);
+ 
++    /**
++     * Delete timestamps seen while replaying segments at startup. Segments are replayed in id
++     * order, but a compacted segment gets a higher id than the active segment that may hold a
++     * newer tombstone, so a stale copy can be replayed after its delete. Checking against this
++     * map keeps deleted keys deleted. Ties go to the delete, as in {@link Index#remove}.
++     */
++    private final Map<Record.Key, Long> recoveredTombstones = new HashMap<>();
++
+     private volatile Segment active;
+     private volatile boolean closed;
+ 
+@@ -87,6 +96,7 @@ public final class SegmentManager implements AutoCloseable {
+                 sealed.put(id, Segment.open(dataDir, id, true));
+             }
+         }
++        recoveredTombstones.clear();
+     }
+ 
+     private void loadHint(Path hintPath) throws IOException {
+@@ -96,7 +106,7 @@ public final class SegmentManager implements AutoCloseable {
+                 HintReadResult res = RecordCodec.readHintAt(ch, pos);
+                 if (res instanceof HintReadResult.CleanEof) break;
+                 if (res instanceof HintReadResult.Success s) {
+-                    index.putIfNewer(s.hint().key(), new IndexEntry(s.hint().segmentId(), s.hint().offset(), s.hint().length(), s.hint().timestamp()));
++                    indexUnlessDeleted(s.hint().key(), new IndexEntry(s.hint().segmentId(), s.hint().offset(), s.hint().length(), s.hint().timestamp()));
+                     pos += s.bytesRead();
+                 } else if (res instanceof HintReadResult.Corrupted c) {
+                     throw new CorruptedRecordException("Corrupted hint file: " + c.reason());
+@@ -105,6 +115,12 @@ public final class SegmentManager implements AutoCloseable {
+         }
+     }
+ 
++    private void indexUnlessDeleted(Record.Key key, IndexEntry entry) {
++        Long deletedAt = recoveredTombstones.get(key);
++        if (deletedAt != null && deletedAt >= entry.timestamp()) return;
++        index.putIfNewer(key, entry);
++    }
++
+     private void recoverDataSegment(long segId, boolean isTail) throws IOException {
+         Path p = dataDir.resolve(Segment.fileNameFor(segId));
+         try (FileChannel ch = FileChannel.open(p, StandardOpenOption.READ, StandardOpenOption.WRITE)) {
+@@ -115,9 +131,10 @@ public final class SegmentManager implements AutoCloseable {
+                 if (res instanceof ReadResult.Success s) {
+                     LogRecord rec = s.record();
+                     if (rec.isTombstone()) {
++                        recoveredTombstones.merge(rec.key(), rec.timestamp(), Math::max);
+                         index.remove(rec.key(), rec.timestamp());
+                     } else {
+-                        index.putIfNewer(rec.key(), new IndexEntry(segId, pos, s.bytesRead(), rec.timestamp()));
++                        indexUnlessDeleted(rec.key(), new IndexEntry(segId, pos, s.bytesRead(), rec.timestamp()));
+                     }
+                     pos += s.bytesRead();
+                 } else if (res instanceof ReadResult.Corrupted c) {
+@@ -166,11 +183,16 @@ public final class SegmentManager implements AutoCloseable {
+         return Collections.unmodifiableList(list);
+     }
+ 
+-    public synchronized void replaceCompactedSegments(List<Long> oldIds, Segment compacted, Path hintPath) throws IOException {
++    /** Makes a freshly written compacted segment readable, before the index points at it. */
++    public synchronized void registerCompactedSegment(Segment compacted) {
+         checkOpen();
+         compacted.markReadOnly();
+         sealed.put(compacted.getSegmentId(), compacted);
++    }
+ 
++    /** Deletes the segments a compaction replaced, once the index no longer points at them. */
++    public synchronized void removeCompactedSources(List<Long> oldIds) throws IOException {
++        checkOpen();
+         for (long oldId : oldIds) {
+             Segment old = sealed.remove(oldId);
+             if (old != null) old.delete();
+diff --git a/src/test/java/io/tinykv/CompactionRaceTest.java b/src/test/java/io/tinykv/CompactionRaceTest.java
+index 9610a84..23f8c8d 100644
+--- a/src/test/java/io/tinykv/CompactionRaceTest.java
++++ b/src/test/java/io/tinykv/CompactionRaceTest.java
+@@ -15,12 +15,9 @@ import static org.assertj.core.api.Assertions.assertThat;
+ /**
+  * Runs compaction concurrently with deletes and reads.
+  *
+- * Compaction runs outside the write lock. For each live record it checks the index
+- * ({@code index.get}) and later re-inserts the key ({@code putIfNewer}). If a delete
+- * lands between those two calls, the index no longer has an entry, so
+- * {@code putIfNewer} inserts the old value again and the deleted key comes back.
+- * Readers can also pick up an index entry that points at a segment compaction has
+- * just deleted.
++ * Guards two races that compaction used to have: a key deleted while compaction copied it
++ * could come back (in memory and after a restart), and reads could fail with "Unknown segment
++ * id" because index entries pointed at the new segment before it was registered.
+  */
+ class CompactionRaceTest {
+ 
+-- 
+2.43.0
+

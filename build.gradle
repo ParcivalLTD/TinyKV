@@ -47,3 +47,11 @@ tasks.register('runDemo', JavaExec) {
     mainClass = 'io.tinykv.demo.Demo'
 }
 
+
+tasks.register('runWriteBenchmark', JavaExec) {
+    group = 'application'
+    description = 'Durable-write throughput: IMMEDIATE vs GROUP_COMMIT at 1-64 writers'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'io.tinykv.demo.WriteBenchmark'
+    args = project.hasProperty('benchArgs') ? project.property('benchArgs').split(' ').toList() : []
+}

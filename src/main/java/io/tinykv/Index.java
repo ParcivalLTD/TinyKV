@@ -41,6 +41,18 @@ public final class Index {
         return updated.get();
     }
 
+    /**
+     * Swaps the entry for {@code key} only if it still equals {@code expected}.
+     * Compaction uses this so that a write or delete that lands while it is copying
+     * always wins over the copied (older) location.
+     */
+    public boolean replaceIfUnchanged(Key key, IndexEntry expected, IndexEntry updated) {
+        Objects.requireNonNull(key);
+        Objects.requireNonNull(expected);
+        Objects.requireNonNull(updated);
+        return map.replace(key, expected, updated);
+    }
+
     public boolean remove(Key key, long timestamp) {
         Objects.requireNonNull(key);
         AtomicBoolean removed = new AtomicBoolean(false);
