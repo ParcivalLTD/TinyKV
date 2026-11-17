@@ -124,7 +124,7 @@ Java line numbers refer to this branch, except for `CodecBeforeFix`.
 
 | Scala | Java | Lines |
 |---|---|---|
-| `Crc.crc` | `RecordCodec.computeCrc` | RecordCodec.java:222-230 |
+| `Crc.crc` | `RecordCodec.computeCrc` | RecordCodec.java:228-236 |
 | `Format.DATA_MAGIC`, `Format.HEADER_SIZE` | `RecordCodec.DATA_MAGIC`, `HEADER_SIZE` | RecordCodec.java:24, 26 |
 | `Format.RecType`, `typeCode`, `fromCode` | `Record.Type`, `getCode`, `fromCode` | Record.java:14-24 |
 | `Format.LogRecord` (invariant: non-empty key) | `Record.LogRecord`, `Record.Key` constructor | Record.java:60-65, 32 |
@@ -253,11 +253,13 @@ case is a design decision. P4 does not contradict it: P4's fault model only remo
 from the end and never changes written ones. A related case: a CRC mismatch on a record
 that ends exactly at EOF is also reported as a torn tail (RecordCodec.java:149).
 
-## Side finding (not fixed)
+## Hint files (not modelled)
 
-`RecordCodec.readHintAt` has the same int overflow: it checks
+`RecordCodec.readHintAt` had the same int overflow: it checked
 `size - position < HINT_HEADER_SIZE + kLen` in `int`. A hint file with
-`KEY_LEN = Integer.MAX_VALUE` reaches `ByteBuffer.allocate(Integer.MAX_VALUE)` and throws
-`OutOfMemoryError` (checked with a throwaway test). `SegmentManager.initialize` catches
-only `Exception` around hint loading, so this would also stop the store from opening.
-Hint files are not modelled here.
+`KEY_LEN = Integer.MAX_VALUE` reached `ByteBuffer.allocate(Integer.MAX_VALUE)` and threw
+`OutOfMemoryError`. `SegmentManager.initialize` only catches `Exception` around hint
+loading, so this stopped the store from opening. It is fixed in the same way: a `long`
+total plus a bound at `Integer.MAX_VALUE`. A bad hint file is now reported as corrupted,
+and recovery falls back to scanning the data segment. `HintLengthOverflowTest` fails
+without the fix and passes with it. Hint files are not part of the Stainless model.
