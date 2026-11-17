@@ -98,4 +98,49 @@ object ListLemmas {
         assert(ldrop(a, lsize(a)) == ldrop(t, lsize(t)))
     }
   }.ensuring(_ => ldrop(a, lsize(a)) == Nil[T]())
+
+  /** Appending never makes the second list shorter either. */
+  def appendSizeLowerRight[T](a: List[T], b: List[T]): Unit = {
+    decreases(a)
+    a match {
+      case Nil()      => ()
+      case Cons(_, t) => appendSizeLowerRight(t, b)
+    }
+  }.ensuring(_ => lsize(a ++ b) >= lsize(b))
+
+  /** A prefix that reaches past the first list keeps all of it. */
+  def takeAppendMore[T](a: List[T], b: List[T], m: Long): Unit = {
+    require(lsize(a) < Long.MaxValue && lsize(a) <= m)
+    decreases(a)
+    a match {
+      case Nil()      => ()
+      case Cons(x, t) =>
+        assert(lsize(t) < Long.MaxValue && lsize(a) == lsize(t) + 1L)
+        takeAppendMore(t, b, m - 1L)
+        assert(ltake(a ++ b, m) == Cons(x, ltake(t ++ b, m - 1L)))
+    }
+  }.ensuring(_ => ltake(a ++ b, m) == a ++ ltake(b, m - lsize(a)))
+
+  /** A prefix that stops inside the first list never sees the second. */
+  def takeAppendLess[T](a: List[T], b: List[T], m: Long): Unit = {
+    require(m <= lsize(a))
+    decreases(a)
+    a match {
+      case Nil()      => ()
+      case Cons(x, t) =>
+        if (m > 0L) {
+          assert(m - 1L <= lsize(t))
+          takeAppendLess(t, b, m - 1L)
+        }
+    }
+  }.ensuring(_ => ltake(a ++ b, m) == ltake(a, m))
+
+  /** A prefix is never longer than the list it is taken from. */
+  def takeSizeLe[T](l: List[T], n: Long): Unit = {
+    decreases(l)
+    l match {
+      case Nil()      => ()
+      case Cons(_, t) => if (n > 0L) takeSizeLe(t, n - 1L)
+    }
+  }.ensuring(_ => lsize(ltake(l, n)) <= lsize(l))
 }
