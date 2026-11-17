@@ -1,0 +1,196 @@
+$ ./run.sh first-run   # Stainless 0.10.4, 2026-11-17T12:17Z
+info Compiling with standard Scala 3.10.1-RC1-bin-20260903-e1f9361-NIGHTLY compiler front end...info Finished compiling                                                                         
+info Preprocessing the symbols...                                                               info Preprocessing finished                                                                     
+info Running phase ConstructsUsage                                                              info Running phase PartialFunctions                                                             info Running phase XlangLowering                                                                info Running phase InnerClasses                                                                 info Running phase Laws                                                                         info Running phase SuperInvariants                                                              info Running phase SuperCalls                                                                   info Running phase Sealing                                                                      info Running phase MethodLifting                                                                info Running phase MergeInvariants                                                              info Running phase FieldAccessors                                                               info Running phase ValueClasses                                                                 info Running phase MethodsLowering                                                              info Running phase ExceptionLifting                                                             info Running phase EffectElaboration                                                            info Running phase AntiAliasing                                                                 info Running phase ReturnElimination                                                            info Running phase ImperativeCodeElimination                                                    info Running phase ImperativeCleanup                                                            info Running phase AdtSpecialization                                                            info Running phase TypeEncoding                                                                 info Running phase InvariantInitialization                                                      info Running phase FunctionClosure                                                              info Running phase FunctionSpecialization                                                       info Running phase UnfoldOpaque                                                                 info Running phase CallSiteInline                                                               info Running phase ChooseInjector                                                               info Running phase ChooseEncoder                                                                info Running phase FunctionInlining                                                             info Running phase TraceInductElimination                                                       info Running phase SizedADTExtraction                                                           info Running phase InductElimination                                                            info Running phase MeasureInference                                                             info Inferring measure for ++...                                                                info Running phase PartialEvaluation                                                            info Finished lowering the symbols                                                              
+info Generating VCs for 24 functions...                                                         info Finished generating VCs                                                                    
+Starting verification...
+info  Verified: 0 / 104info Verifying: 104 verification conditions:info  Verified: 1 / 104                     info  Verified: 2 / 104                     info  Verified: 3 / 104                     info  Verified: 4 / 104                     info  Verified: 5 / 104                     info  Verified: 6 / 104                     info  Verified: 7 / 104                     info  Verified: 8 / 104                     info  Verified: 9 / 104                     info  Verified: 10 / 104                    info  Verified: 11 / 104                    info  Verified: 12 / 104                    info  Verified: 13 / 104                    info  Verified: 14 / 104                    info  Verified: 15 / 104                    info  Verified: 16 / 104                    info  Verified: 17 / 104                    info  Verified: 18 / 104                    info  Verified: 19 / 104                    info  Verified: 20 / 104                    info  Verified: 21 / 104                    info  Verified: 22 / 104                    info  Verified: 23 / 104                    info  Verified: 24 / 104                    info  Verified: 25 / 104                    info  Verified: 26 / 104                    info  Verified: 27 / 104                    info  Verified: 28 / 104                    info  Verified: 29 / 104                    info  Verified: 30 / 104                    
+warning:  - Result for 'precond. (call readAt(input, HEADER_SIZE, {   assert...)' VC for decode @46:27:
+warning: val remaining: Long = lsize[Byte](input)
+remaining == 0 || remaining < HEADER_SIZE.toLong || {
+  val targetBound: (Byte, List[Byte]) = getByte(readAt(input, 0, HEADER_SIZE))
+  targetBound._1.toInt != DATA_MAGIC.toInt || {
+    val targetBound: (Int, List[Byte]) = getInt(getByte(getLong(getInt(targetBound._2)._2)._2)._2)
+    val targetBound: (Int, List[Byte]) = getInt(targetBound._2)
+    (targetBound._1 <= 0 || targetBound._1 < 0) || remaining < ((HEADER_SIZE + targetBound._1) + targetBound._1).toLong || {
+      val offset: Int = HEADER_SIZE
+      val len: Int = targetBound._1 + targetBound._1
+      0 <= offset && 0 <= len && offset.toLong + len.toLong <= lsize[Byte](input)
+    }
+  }
+}
+CodecBeforeFix.scala:46:27: warning:  => INVALID
+                       val payload = readAt(input, HEADER_SIZE, kLen + vLen)     // l.132-134: allocate(kLen + vLen)
+                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+warning: Found counter-example:
+warning:   input: List[Byte] -> Cons[Byte](75, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](126, Cons[Byte](1, Cons[Byte](36, Cons[Byte](-63, Cons[Byte](100, Cons[Byte](0, Cons[Byte](0, Cons[Byte](8, Nil[Byte]()))))))))))))))))))))))
+info  Verified: 30 / 104info  Verified: 31 / 104info  Verified: 32 / 104info  Verified: 33 / 104info  Verified: 34 / 104
+warning:  - Result for 'body assertion: Addition overflow' VC for decode @43:28:
+warning: val remaining: Long = lsize[Byte](input)
+remaining == 0 || remaining < HEADER_SIZE.toLong || {
+  val targetBound: (Byte, List[Byte]) = getByte(readAt(input, 0, HEADER_SIZE))
+  targetBound._1.toInt != DATA_MAGIC.toInt || {
+    val targetBound: (Int, List[Byte]) = getInt(getByte(getLong(getInt(targetBound._2)._2)._2)._2)
+    val targetBound: (Int, List[Byte]) = getInt(targetBound._2)
+    (targetBound._1 <= 0 || targetBound._1 < 0) || {
+      val lhs: Int = HEADER_SIZE
+      (lhs & -2147483648) != (targetBound._1 & -2147483648) || (lhs & -2147483648) == (lhs + targetBound._1 & -2147483648)
+    }
+  }
+}
+CodecBeforeFix.scala:43:28: warning:  => INVALID
+                     val total: Int = HEADER_SIZE + kLen + vLen                  // l.127: 32-bit int arithmetic
+                                      ^^^^^^^^^^^^^^^^^^
+warning: Found counter-example:
+warning:   input: List[Byte] -> Cons[Byte](75, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](127, Cons[Byte](-1, Cons[Byte](-1, Cons[Byte](-16, Cons[Byte](0, Cons[Byte](0, Cons[Byte](32, Cons[Byte](0, Nil[Byte]()))))))))))))))))))))))
+info  Verified: 34 / 104
+warning:  - Result for 'body assertion: Addition overflow' VC for decode @43:28:
+warning: val remaining: Long = lsize[Byte](input)
+remaining == 0 || remaining < HEADER_SIZE.toLong || {
+  val targetBound: (Byte, List[Byte]) = getByte(readAt(input, 0, HEADER_SIZE))
+  targetBound._1.toInt != DATA_MAGIC.toInt || {
+    val targetBound: (Int, List[Byte]) = getInt(getByte(getLong(getInt(targetBound._2)._2)._2)._2)
+    val targetBound: (Int, List[Byte]) = getInt(targetBound._2)
+    (targetBound._1 <= 0 || targetBound._1 < 0) || {
+      val lhs: Int = HEADER_SIZE + targetBound._1
+      (lhs & -2147483648) != (targetBound._1 & -2147483648) || (lhs & -2147483648) == (lhs + targetBound._1 & -2147483648)
+    }
+  }
+}
+CodecBeforeFix.scala:43:28: warning:  => INVALID
+                     val total: Int = HEADER_SIZE + kLen + vLen                  // l.127: 32-bit int arithmetic
+                                      ^^^^^^^^^^^^^^^^^^^^^^^^^
+warning: Found counter-example:
+warning:   input: List[Byte] -> Cons[Byte](75, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](9, Cons[Byte](127, Cons[Byte](-1, Cons[Byte](-1, Cons[Byte](-31, Nil[Byte]()))))))))))))))))))))))
+info  Verified: 34 / 104
+warning:  - Result for 'body assertion: Addition overflow' VC for decode @46:54:
+warning: val remaining: Long = lsize[Byte](input)
+remaining == 0 || remaining < HEADER_SIZE.toLong || {
+  val targetBound: (Byte, List[Byte]) = getByte(readAt(input, 0, HEADER_SIZE))
+  targetBound._1.toInt != DATA_MAGIC.toInt || {
+    val targetBound: (Int, List[Byte]) = getInt(getByte(getLong(getInt(targetBound._2)._2)._2)._2)
+    val targetBound: (Int, List[Byte]) = getInt(targetBound._2)
+    (targetBound._1 <= 0 || targetBound._1 < 0) || remaining < ((HEADER_SIZE + targetBound._1) + targetBound._1).toLong || (targetBound._1 & -2147483648) != (targetBound._1 & -2147483648) || (targetBound._1 & -2147483648) == (targetBound._1 + targetBound._1 & -2147483648)
+  }
+}
+CodecBeforeFix.scala:46:54: warning:  => INVALID
+                       val payload = readAt(input, HEADER_SIZE, kLen + vLen)     // l.132-134: allocate(kLen + vLen)
+                                                                ^^^^^^^^^^^
+warning: Found counter-example:
+warning:   input: List[Byte] -> Cons[Byte](75, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](127, Cons[Byte](-1, Cons[Byte](0, Cons[Byte](0, Cons[Byte](0, Cons[Byte](1, Cons[Byte](0, Cons[Byte](0, Nil[Byte]()))))))))))))))))))))))
+info  Verified: 34 / 104info  Verified: 35 / 104info  Verified: 36 / 104info  Verified: 37 / 104info  Verified: 38 / 104info  Verified: 39 / 104info  Verified: 40 / 104info  Verified: 41 / 104info  Verified: 42 / 104info  Verified: 43 / 104info  Verified: 44 / 104info  Verified: 45 / 104info  Verified: 46 / 104info  Verified: 47 / 104info  Verified: 48 / 104info  Verified: 49 / 104info  Verified: 50 / 104info  Verified: 51 / 104info  Verified: 52 / 104info  Verified: 53 / 104info  Verified: 54 / 104info  Verified: 55 / 104info  Verified: 56 / 104info  Verified: 57 / 104info  Verified: 58 / 104info  Verified: 59 / 104info  Verified: 60 / 104info  Verified: 61 / 104info  Verified: 62 / 104info  Verified: 63 / 104info  Verified: 64 / 104info  Verified: 65 / 104info  Verified: 66 / 104info  Verified: 67 / 104info  Verified: 68 / 104info  Verified: 69 / 104info  Verified: 70 / 104info  Verified: 71 / 104info  Verified: 72 / 104info  Verified: 73 / 104info  Verified: 74 / 104info  Verified: 75 / 104info  Verified: 76 / 104info  Verified: 77 / 104info  Verified: 78 / 104info  Verified: 79 / 104info  Verified: 80 / 104info  Verified: 81 / 104info  Verified: 82 / 104info  Verified: 83 / 104info  Verified: 84 / 104info  Verified: 85 / 104info  Verified: 86 / 104info  Verified: 87 / 104info  Verified: 88 / 104info  Verified: 89 / 104info  Verified: 90 / 104info  Verified: 91 / 104info  Verified: 92 / 104info  Verified: 93 / 104info  Verified: 94 / 104info  Verified: 95 / 104info  Verified: 96 / 104info  Verified: 97 / 104info  Verified: 98 / 104info  Verified: 99 / 104info  Verified: 100 / 104
+Done in 87.81s
+  
+ stainless summary 
+                                                                                                         
+CodecBeforeFix.scala:32:20:   decode     precond. (call readAt(input, 0, HEADER_SIZE))             valid    U:smt-z3    0.0  
+CodecBeforeFix.scala:33:25:   decode     precond. (call getByte(header))                           valid    U:smt-z3    0.1  
+CodecBeforeFix.scala:33:25:   decode     precond. (call getByte(header))                           valid    U:smt-z3    0.1  
+CodecBeforeFix.scala:36:31:   decode     precond. (call getInt(h1))                                valid    U:smt-z3    0.1  
+CodecBeforeFix.scala:36:31:   decode     precond. (call getInt(h1))                                valid    U:smt-z3    0.1  
+CodecBeforeFix.scala:37:24:   decode     precond. (call getLong(h2))                               valid    U:smt-cvc5  0.1  
+CodecBeforeFix.scala:37:24:   decode     precond. (call getLong(h2))                               valid    U:smt-z3    0.1  
+CodecBeforeFix.scala:38:24:   decode     precond. (call getByte(h3))                               valid    U:smt-z3    0.1  
+CodecBeforeFix.scala:38:24:   decode     precond. (call getByte(h3))                               valid    U:smt-z3    0.1  
+CodecBeforeFix.scala:39:26:   decode     precond. (call getInt(h4))                                valid    U:smt-z3    0.1  
+CodecBeforeFix.scala:39:26:   decode     precond. (call getInt(h4))                                valid    U:smt-z3    0.2  
+CodecBeforeFix.scala:40:25:   decode     precond. (call getInt(h5))                                valid    U:smt-z3    0.1  
+CodecBeforeFix.scala:40:25:   decode     precond. (call getInt(h5))                                valid    U:smt-z3    0.1  
+CodecBeforeFix.scala:43:28:   decode     body assertion: Addition overflow                         invalid  U:smt-z3    19.0 
+CodecBeforeFix.scala:43:28:   decode     body assertion: Addition overflow                         invalid  U:smt-z3    18.1 
+CodecBeforeFix.scala:46:27:   decode     precond. (call readAt(input, HEADER_SIZE, {   assert...)  invalid  U:smt-z3    15.9 
+CodecBeforeFix.scala:46:54:   decode     body assertion: Addition overflow                         invalid  U:smt-z3    20.5 
+CodecBeforeFix.scala:47:32:   decode     precond. (call getBytes(payload, kLen))                   valid    U:smt-z3    0.1  
+CodecBeforeFix.scala:47:32:   decode     precond. (call getBytes(payload, kLen))                   valid    U:smt-z3    0.1  
+CodecBeforeFix.scala:48:31:   decode     precond. (call getBytes(p1, vLen))                        valid    U:smt-z3    0.1  
+CodecBeforeFix.scala:48:31:   decode     precond. (call getBytes(p1, vLen))                        valid    U:smt-z3    0.2  
+CodecBeforeFix.scala:51:18:   decode     body assertion: match exhaustiveness                      valid    U:smt-cvc5  0.0  
+CodecBeforeFix.scala:53:39:   decode     class invariant: inv                                      valid    U:smt-z3    0.3  
+Format.scala:64:5:            encodable  body assertion: Addition overflow                         valid    U:smt-z3    0.0  
+Format.scala:64:5:            encodable  body assertion: Addition overflow                         valid    U:smt-z3    0.1  
+Format.scala:73:21:           encode     body assertion: Narrowing large negative signed int       valid    U:smt-z3    0.1  
+Format.scala:73:21:           encode     body assertion: Narrowing too large signed int            valid    U:smt-cvc5  0.3  
+Format.scala:74:21:           encode     body assertion: Narrowing large negative signed int       valid    U:smt-cvc5  0.1  
+Format.scala:74:21:           encode     body assertion: Narrowing too large signed int            valid    U:smt-z3    0.1  
+Bytes.scala:91:5:             getByte    body assertion: match exhaustiveness                      valid    U:smt-z3    0.0  
+Bytes.scala:91:5:             getByte    postcondition                                             valid    U:smt-z3    0.0  
+Bytes.scala:92:29:            getByte    postcondition                                             valid    U:smt-z3    0.0  
+Bytes.scala:94:69:            getByte    body assertion: Subtraction overflow                      valid    U:smt-z3    0.0  
+Bytes.scala:94:69:            getByte    body assertion: Subtraction overflow                      valid    U:smt-z3    0.0  
+Bytes.scala:119:7:            getBytes   postcondition                                             valid    U:smt-cvc5  0.1  
+Bytes.scala:123:83:           getBytes   body assertion: Subtraction overflow                      valid    U:smt-z3    0.0  
+Bytes.scala:99:5:             getInt     body assertion: match exhaustiveness                      valid    U:smt-z3    0.0  
+Bytes.scala:99:5:             getInt     postcondition                                             valid    U:smt-z3    0.1  
+Bytes.scala:101:9:            getInt     postcondition                                             valid    U:smt-z3    0.2  
+Bytes.scala:101:26:           getInt     strict arithmetic on shift                                valid    U:smt-z3    0.0  
+Bytes.scala:101:48:           getInt     strict arithmetic on shift                                valid    U:smt-z3    0.0  
+Bytes.scala:101:70:           getInt     strict arithmetic on shift                                valid    U:smt-z3    0.0  
+Bytes.scala:103:69:           getInt     body assertion: Subtraction overflow                      valid    U:smt-z3    0.0  
+Bytes.scala:103:69:           getInt     body assertion: Subtraction overflow                      valid    U:smt-z3    0.0  
+Bytes.scala:108:5:            getLong    body assertion: match exhaustiveness                      valid    U:smt-z3    0.1  
+Bytes.scala:108:5:            getLong    postcondition                                             valid    U:smt-z3    0.1  
+Bytes.scala:110:9:            getLong    postcondition                                             valid    U:smt-z3    0.4  
+Bytes.scala:110:27:           getLong    strict arithmetic on shift                                valid    U:smt-z3    0.0  
+Bytes.scala:110:50:           getLong    strict arithmetic on shift                                valid    U:smt-cvc5  0.0  
+Bytes.scala:110:73:           getLong    strict arithmetic on shift                                valid    U:smt-z3    0.0  
+Bytes.scala:110:96:           getLong    strict arithmetic on shift                                valid    U:smt-cvc5  0.0  
+Bytes.scala:111:27:           getLong    strict arithmetic on shift                                valid    U:smt-z3    0.0  
+Bytes.scala:111:50:           getLong    strict arithmetic on shift                                valid    U:smt-cvc5  0.0  
+Bytes.scala:111:73:           getLong    strict arithmetic on shift                                valid    U:smt-z3    0.0  
+Bytes.scala:113:69:           getLong    body assertion: Subtraction overflow                      valid    U:smt-cvc5  0.0  
+Bytes.scala:113:69:           getLong    body assertion: Subtraction overflow                      valid    U:smt-z3    0.0  
+Bytes.scala:59:5:             ldrop      body assertion: match exhaustiveness                      trivial              0.0  
+Bytes.scala:59:5:             ldrop      postcondition                                             trivial              0.0  
+Bytes.scala:60:26:            ldrop      postcondition                                             valid    U:smt-z3    0.0  
+Bytes.scala:61:46:            ldrop      measure decreases                                         valid    U:smt-z3    0.0  
+Bytes.scala:61:46:            ldrop      postcondition                                             valid    U:smt-z3    0.8  
+Bytes.scala:61:55:            ldrop      body assertion: Subtraction overflow                      valid    U:smt-z3    0.0  
+Bytes.scala:65:22:            ldrop      body assertion: Subtraction overflow                      valid    U:smt-z3    0.0  
+Bytes.scala:65:22:            ldrop      body assertion: Subtraction overflow                      valid    U:smt-z3    0.0  
+Bytes.scala:65:22:            ldrop      body assertion: Subtraction overflow                      valid    U:smt-z3    0.0  
+Bytes.scala:65:22:            ldrop      body assertion: Subtraction overflow                      trivial              0.0  
+Bytes.scala:65:83:            ldrop      body assertion: Subtraction overflow                      valid    U:smt-z3    0.0  
+Bytes.scala:65:83:            ldrop      body assertion: Subtraction overflow                      valid    U:smt-z3    0.0  
+Bytes.scala:65:83:            ldrop      body assertion: Subtraction overflow                      valid    U:smt-z3    0.0  
+Bytes.scala:65:83:            ldrop      body assertion: Subtraction overflow                      trivial              0.0  
+Bytes.scala:65:89:            ldrop      non-negative measure                                      valid    U:smt-z3    0.1  
+Bytes.scala:65:89:            ldrop      postcondition                                             valid    U:smt-z3    0.0  
+Bytes.scala:35:5:             lsize      body assertion: match exhaustiveness                      trivial              0.0  
+Bytes.scala:35:5:             lsize      non-negative measure                                      valid    U:smt-z3    0.0  
+Bytes.scala:35:5:             lsize      postcondition                                             trivial              0.0  
+Bytes.scala:36:26:            lsize      postcondition                                             valid    U:smt-z3    0.0  
+Bytes.scala:38:17:            lsize      measure decreases                                         valid    U:smt-z3    0.0  
+Bytes.scala:39:33:            lsize      postcondition                                             valid    U:smt-z3    0.0  
+Bytes.scala:39:40:            lsize      body assertion: Addition overflow                         valid    U:smt-z3    0.0  
+Bytes.scala:39:40:            lsize      postcondition                                             valid    U:smt-z3    0.0  
+Bytes.scala:48:5:             ltake      body assertion: match exhaustiveness                      trivial              0.0  
+Bytes.scala:48:5:             ltake      postcondition                                             trivial              0.0  
+Bytes.scala:49:26:            ltake      postcondition                                             valid    U:smt-z3    0.0  
+Bytes.scala:50:39:            ltake      postcondition                                             valid    U:smt-z3    0.0  
+Bytes.scala:50:53:            ltake      postcondition                                             valid    U:smt-z3    0.1  
+Bytes.scala:50:61:            ltake      measure decreases                                         valid    U:smt-z3    0.0  
+Bytes.scala:50:70:            ltake      body assertion: Subtraction overflow                      valid    U:smt-z3    0.0  
+Bytes.scala:52:44:            ltake      non-negative measure                                      valid    U:smt-z3    0.0  
+Bytes.scala:74:17:            putInt     strict arithmetic on shift                                valid    U:smt-z3    0.0  
+Bytes.scala:74:41:            putInt     strict arithmetic on shift                                valid    U:smt-z3    0.0  
+Bytes.scala:74:65:            putInt     strict arithmetic on shift                                valid    U:smt-z3    0.0  
+Bytes.scala:79:17:            putLong    strict arithmetic on shift                                valid    U:smt-z3    0.0  
+Bytes.scala:79:41:            putLong    strict arithmetic on shift                                valid    U:smt-z3    0.0  
+Bytes.scala:79:65:            putLong    strict arithmetic on shift                                valid    U:smt-z3    0.0  
+Bytes.scala:79:89:            putLong    strict arithmetic on shift                                valid    U:smt-z3    0.0  
+Bytes.scala:80:17:            putLong    strict arithmetic on shift                                valid    U:smt-z3    0.0  
+Bytes.scala:80:41:            putLong    strict arithmetic on shift                                valid    U:smt-cvc5  0.0  
+Bytes.scala:80:65:            putLong    strict arithmetic on shift                                valid    U:smt-z3    0.0  
+Bytes.scala:137:7:            readAt     postcondition                                             valid    U:smt-z3    0.4  
+Bytes.scala:138:40:           readAt     body assertion: Addition overflow                         valid    U:smt-z3    0.0  
+Format.scala:26:36:           typeCode   body assertion: match exhaustiveness                      trivial              0.0  
+..............................................................................................................................
+total: 101  valid: 97   (0 from cache, 9 trivial) invalid: 4    unknown: 0    time:   79.82                                  
+
+Verification pipeline summary:
+  @extern, anti-aliasing, choose injection, smt-cvc5, smt-z3, non-batched
+Shutting down executor service.
+
+real	1m29.249s
+user	3m11.077s
+sys	0m5.292s
