@@ -150,6 +150,11 @@ public final class RecordCodec {
         }
 
         Type type = Type.fromCode(typeCode);
+        if (type == null) {
+            // Rejected as in decode(). The CRC matched and every byte is present, so this is
+            // not a torn write: recovery reports it rather than truncating it away.
+            return new ReadResult.Corrupted(position, "Unknown record type: " + typeCode, false);
+        }
         return new ReadResult.Success(new LogRecord(ts, type, Key.of(kBytes), vBytes, storedCrc), (int) total);
     }
 
@@ -193,8 +198,14 @@ public final class RecordCodec {
         long offset = h.getLong();
         int len = h.getInt();
 
-        if (kLen <= 0 || size - position < HINT_HEADER_SIZE + kLen) {
+        // long: HINT_HEADER_SIZE + kLen in int can wrap negative and pass this check.
+        long total = (long) HINT_HEADER_SIZE + kLen;
+        if (kLen <= 0 || size - position < total) {
             return new HintReadResult.Corrupted(position, "Invalid key length in hint");
+        }
+        // Only reachable in a file over 2 GiB: bytesRead and the key buffer are int-sized.
+        if (total > Integer.MAX_VALUE) {
+            return new HintReadResult.Corrupted(position, "Hint length exceeds Integer.MAX_VALUE");
         }
 
         ByteBuffer kB = ByteBuffer.allocate(kLen);
@@ -211,7 +222,7 @@ public final class RecordCodec {
 
         if (crc.getValue() != storedCrc) return new HintReadResult.Corrupted(position, "Hint CRC mismatch");
 
-        return new HintReadResult.Success(new Hint(ts, Key.of(kBytes), segId, offset, len), HINT_HEADER_SIZE + kLen);
+        return new HintReadResult.Success(new Hint(ts, Key.of(kBytes), segId, offset, len), (int) total);
     }
 
     private static long computeCrc(long ts, byte type, byte[] k, byte[] v) {
