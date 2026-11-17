@@ -74,7 +74,8 @@ public final class RecordCodec {
         int kLen = buf.getInt();
         int vLen = buf.getInt();
 
-        if (kLen <= 0 || vLen < 0 || buf.remaining() < kLen + vLen) {
+        // (long): kLen + vLen in int arithmetic can wrap to a negative number and pass this check.
+        if (kLen <= 0 || vLen < 0 || buf.remaining() < (long) kLen + vLen) {
             throw new CorruptedRecordException("Invalid payload lengths");
         }
 
@@ -124,12 +125,18 @@ public final class RecordCodec {
             return new ReadResult.Corrupted(position, "Corrupted lengths", false);
         }
 
-        int total = HEADER_SIZE + kLen + vLen;
+        // long: 22 plus two non-negative ints cannot overflow a long (in int it can wrap negative).
+        long total = (long) HEADER_SIZE + kLen + vLen;
         if (remaining < total) {
             return new ReadResult.Corrupted(position, "Incomplete payload at EOF", true);
         }
+        // Only reachable in a file over 2 GiB. The buffer and Success.bytesRead are int-sized,
+        // and encode() never writes a record this long, so this is corruption, not a torn write.
+        if (total > Integer.MAX_VALUE) {
+            return new ReadResult.Corrupted(position, "Record length exceeds Integer.MAX_VALUE", false);
+        }
 
-        ByteBuffer payload = ByteBuffer.allocate(kLen + vLen);
+        ByteBuffer payload = ByteBuffer.allocate(kLen + vLen); // <= Integer.MAX_VALUE - HEADER_SIZE
         channel.read(payload, position + HEADER_SIZE);
         payload.flip();
 
@@ -143,7 +150,7 @@ public final class RecordCodec {
         }
 
         Type type = Type.fromCode(typeCode);
-        return new ReadResult.Success(new LogRecord(ts, type, Key.of(kBytes), vBytes, storedCrc), total);
+        return new ReadResult.Success(new LogRecord(ts, type, Key.of(kBytes), vBytes, storedCrc), (int) total);
     }
 
     public static ByteBuffer encodeHint(Hint hint) {
