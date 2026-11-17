@@ -98,13 +98,12 @@ solvers), plus the following.
    `encode` stores its low 32 bits, and `readRecordAt` compares it with
    `Integer.toUnsignedLong(stored)`. For values in that range this is the same as
    comparing the 32-bit ints, which is what the model does.
-6. *Unknown type codes.* The model rejects a type code other than 1 or 2 with
-   `Corrupted(false)`, as `RecordCodec.decode` does (RecordCodec.java:92-95).
-   **`readRecordAt` itself does not**: `Type.fromCode` returns `null` and the
-   `LogRecord` constructor throws a `NullPointerException` (RecordCodec.java:152-153,
-   Record.java:62). P2 therefore does not carry over to the Java for a record that has a
-   valid CRC but an unknown type code. That path is unchanged and is a candidate
-   follow-up fix.
+6. *Unknown type codes.* A type code other than 1 or 2 gives `Corrupted(false)`, in the
+   model and in `readRecordAt` (RecordCodec.java:152-157), as in `RecordCodec.decode`
+   (l.92-95). Before that was fixed, `readRecordAt` passed `Type.fromCode`'s `null` on to
+   the `LogRecord` constructor, which threw a `NullPointerException`.
+   `CodecBeforeFix` still models the stricter check, so on that one path it is stricter
+   than the code it models; `UnknownRecordTypeTest` covers the fix.
 7. *Simplified result types.* `ReadResult.Corrupted` has no `position` (always the
    caller's position) and no `reason` (only logged). `LogRecord` has no `crc` field:
    `encode` ignores it and `decode` only copies the stored checksum into it.
@@ -125,7 +124,7 @@ Java line numbers refer to this branch, except for `CodecBeforeFix`.
 
 | Scala | Java | Lines |
 |---|---|---|
-| `Crc.crc` | `RecordCodec.computeCrc` | RecordCodec.java:217-225 |
+| `Crc.crc` | `RecordCodec.computeCrc` | RecordCodec.java:222-230 |
 | `Format.DATA_MAGIC`, `Format.HEADER_SIZE` | `RecordCodec.DATA_MAGIC`, `HEADER_SIZE` | RecordCodec.java:24, 26 |
 | `Format.RecType`, `typeCode`, `fromCode` | `Record.Type`, `getCode`, `fromCode` | Record.java:14-24 |
 | `Format.LogRecord` (invariant: non-empty key) | `Record.LogRecord`, `Record.Key` constructor | Record.java:60-65, 32 |
@@ -138,7 +137,7 @@ Java line numbers refer to this branch, except for `CodecBeforeFix`.
 | `Bytes.getByte`, `getInt`, `getLong` | `ByteBuffer.get`, `getInt`, `getLong` | RecordCodec.java:113, 118-122 |
 | `Bytes.getBytes` | `new byte[n]; payload.get(dst)` | RecordCodec.java:143-146 |
 | `Bytes.readAt` | `ByteBuffer.allocate` + `channel.read` + `flip` | RecordCodec.java:109-111, 139-141 |
-| `Codec.decode` | `RecordCodec.readRecordAt` (+ `decode`'s type check) | RecordCodec.java:100-154 (+ 92-95), line by line in comments |
+| `Codec.decode` | `RecordCodec.readRecordAt` | RecordCodec.java:100-159, line by line in comments |
 | `CodecBeforeFix.decode` | `RecordCodec.readRecordAt` before the fix | RecordCodec.java:99-147 (+ 91-94) at commit `1695f13` |
 | `Recovery.recover` | `SegmentManager.recoverDataSegment` | SegmentManager.java:124-152 |
 

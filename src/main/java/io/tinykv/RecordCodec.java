@@ -150,6 +150,11 @@ public final class RecordCodec {
         }
 
         Type type = Type.fromCode(typeCode);
+        if (type == null) {
+            // Rejected as in decode(). The CRC matched and every byte is present, so this is
+            // not a torn write: recovery reports it rather than truncating it away.
+            return new ReadResult.Corrupted(position, "Unknown record type: " + typeCode, false);
+        }
         return new ReadResult.Success(new LogRecord(ts, type, Key.of(kBytes), vBytes, storedCrc), (int) total);
     }
 

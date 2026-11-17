@@ -23,9 +23,8 @@ import Format._
   * `input` stands for the segment's bytes from `position` to EOF, so Java's
   * `long remaining = size - position` is `lsize(input)`, also a Long.
   *
-  * As in CodecBeforeFix, an unknown type code is rejected with Corrupted(false), as
-  * RecordCodec.decode does (l.92-95); readRecordAt itself still passes Type.fromCode's
-  * null on to the LogRecord constructor, which throws a NullPointerException.
+  * An unknown type code is rejected with Corrupted(false) (l.152-157), as
+  * RecordCodec.decode also does (l.92-95).
   */
 object Codec {
 
@@ -55,8 +54,8 @@ object Codec {
             if (crc(ts, tc, kBytes, vBytes) != storedCrc)             // l.148
               Corrupted(total >= remaining)                           // l.149: position + total >= size
             else fromCode(tc) match {                                 // l.152
-              case None()  => Corrupted(false)                        // decode() l.92-95 (see above)
-              case Some(t) => Success(LogRecord(ts, t, kBytes, vBytes), total.toInt) // l.153
+              case None()  => Corrupted(false)                        // l.153-157
+              case Some(t) => Success(LogRecord(ts, t, kBytes, vBytes), total.toInt) // l.158
             }
           }
         }
