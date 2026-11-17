@@ -29,7 +29,7 @@ LEMMAS=(ListLemmas.scala ByteLemmas.scala)
 case "${1:-}" in
   first-run)  files=("${MODEL[@]}" CodecBeforeFix.scala) ;;
   before-fix) files=("${MODEL[@]}" CodecBeforeFix.scala "${LEMMAS[@]}" RoundTripBeforeFix.scala) ;;
-  fixed)      files=("${MODEL[@]}" Codec.scala "${LEMMAS[@]}" RoundTrip.scala) ;;
+  fixed)      files=("${MODEL[@]}" Codec.scala "${LEMMAS[@]}" RoundTrip.scala Integrity.scala) ;;
   *) echo "usage: $0 first-run|before-fix|fixed" >&2; exit 2 ;;
 esac
 
