@@ -8,6 +8,42 @@ It saves key-value pairs directly to disk using an append-only Write-Ahead Log (
 
 ---
 
+## Verification: the record codec and crash recovery
+
+A Scala model of the on-disk record codec and the crash-recovery loop is verified with
+[Stainless](https://github.com/epfl-lara/stainless) 0.10.4: all 408 verification conditions
+are valid. The exact statements, the assumptions and the line-by-line correspondence with the
+Java are in [verification/README.md](verification/README.md).
+
+| | What is proven about the model |
+|---|---|
+| **P1** Round trip | Decoding an encoded record, followed by any bytes, returns that record and its length. |
+| **P2** No crash | Decoding *any* byte sequence terminates with a result: no integer overflow, no read past the end, no negative or oversized allocation. |
+| **P3** Integrity | A decoded record's length and stored checksum match its bytes. |
+| **P4** Recovery under torn writes | If a crash keeps any prefix of the tail segment, recovery returns exactly the records lying entirely inside it (none invented, none lost) and truncates right after the last one. |
+
+What the work found:
+
+- **A 32-bit length overflow.** A header with `KEY_LEN = Integer.MAX_VALUE` wrapped
+  `kLen + vLen` negative and stopped `KVStore.open`. It was first reproduced in the Java;
+  Stainless then flagged it on its own in the model of the old code, with concrete 22-byte
+  counterexamples ([verification/first-run.txt](verification/first-run.txt)). Fixed in
+  `RecordCodec` and, for the same bug, in hint files; `LengthOverflowTest` and
+  `HintLengthOverflowTest` fail without the fixes.
+- **A gap in the fault model.** P4 covers a crash that loses the end of the log, not bytes that
+  change after they were written. A single damaged length field in the middle of the tail
+  segment is classified as a torn tail, and recovery deletes the later, fully written records.
+  `TornTailClassificationTest` pins this behaviour; how to classify the case is left open as a
+  design decision ([details](verification/README.md#step-5-a-damaged-length-in-the-middle-of-the-tail-segment)).
+- **Two compaction races** (deleted keys coming back, and reads failing while a segment was
+  compacted), found by stress testing and fixed; `CompactionRaceTest` covers them.
+
+**What is not claimed:** TinyKV itself is not verified. Only the codec and the recovery loop
+are modelled, the Scala-to-Java correspondence was checked by hand, and nothing is proven
+about CRC-32's error detection.
+
+---
+
 ## How It Works
 
 Instead of overwriting data in the middle of files (which is slow and easily corrupted), TinyKV uses the **Bitcask storage model**:
@@ -305,14 +341,24 @@ When exposed publicly (e.g. at `kv.wavebeef.com`), the HTTP server enforces stri
 │   └── http/
 │       ├── TinyKVServer.java      # REST HTTP server on Virtual Threads with security guards
 │       └── ServerMain.java        # Container / CLI daemon entrypoint
-└── src/test/java/io/tinykv/
-    ├── KVStoreTest.java
-    ├── CompactionAndRotationTest.java
-    ├── CrashRecoveryTest.java
-    ├── DurabilityTest.java
-    ├── RecordCodecTest.java
-    └── http/
-        └── TinyKVServerTest.java   # HTTP REST endpoint integration tests
+├── src/test/java/io/tinykv/
+│   ├── KVStoreTest.java
+│   ├── CompactionAndRotationTest.java
+│   ├── CompactionRaceTest.java    # compaction concurrent with deletes and reads
+│   ├── CrashRecoveryTest.java
+│   ├── DurabilityTest.java
+│   ├── RecordCodecTest.java
+│   ├── LengthOverflowTest.java    # regression tests for the length overflow
+│   ├── HintLengthOverflowTest.java
+│   ├── TornTailClassificationTest.java  # pins the damaged-length case
+│   ├── UnknownRecordTypeTest.java
+│   └── http/
+│       └── TinyKVServerTest.java  # HTTP REST endpoint integration tests
+└── verification/                  # Stainless model of the codec and recovery, proofs P1-P4
+    ├── README.md                  # statements, assumptions, Scala-to-Java correspondence, runs
+    ├── Codec.scala, Recovery.scala, Integrity.scala, RoundTrip.scala, ...
+    ├── first-run.txt              # Stainless's raw output on the model before the fix
+    └── run.sh
 ```
 
 ## How it was built
