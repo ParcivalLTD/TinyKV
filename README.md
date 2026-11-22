@@ -314,3 +314,8 @@ When exposed publicly (e.g. at `kv.wavebeef.com`), the HTTP server enforces stri
     └── http/
         └── TinyKVServerTest.java   # HTTP REST endpoint integration tests
 ```
+
+## How it was built
+
+I build this code with AI coding agents, including the Stainless model in
+`verification/`.
